@@ -810,6 +810,57 @@ fn copy_search_owns_prompt_repeat_highlights_selection_and_restore() {
 }
 
 #[test]
+fn navigator_popup_clears_underlying_terminal_underline() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    let layout = state.layout(106, 30);
+    let mut pane_buffer = Buffer::empty(Rect::new(
+        0,
+        0,
+        layout.pane_surface.width,
+        layout.pane_surface.height,
+    ));
+    pane_buffer.set_style(
+        pane_buffer.area,
+        Style::default().add_modifier(Modifier::UNDERLINED),
+    );
+    let mut pane_surface = surface();
+    pane_surface.frame = FrameData::from_ratatui_buffer(&pane_buffer, None);
+    state.set_pane_surface(pane_surface);
+    let before = state.compose(106, 30).expect("terminal frame");
+
+    state.open_navigator_overlay();
+    let frame = state.compose(106, 30).expect("navigator frame");
+    let popup = state.hits.navigator_popup;
+    let covered = popup.intersection(layout.pane_surface);
+    assert!(!covered.is_empty());
+    for y in covered.y..covered.bottom() {
+        for x in covered.x..covered.right() {
+            let index = usize::from(y) * usize::from(frame.width) + usize::from(x);
+            assert_ne!(
+                before.cells[index].modifier & Modifier::UNDERLINED.bits(),
+                0
+            );
+            assert_eq!(
+                frame.cells[index].modifier & Modifier::UNDERLINED.bits(),
+                0,
+                "terminal underline leaked through popup at ({x}, {y})"
+            );
+        }
+    }
+    let exposed = (layout.pane_surface.right() - 1, covered.y);
+    let index = usize::from(exposed.1) * usize::from(frame.width) + usize::from(exposed.0);
+    assert!(exposed.0 >= popup.right());
+    assert_eq!(frame.cells[index], before.cells[index]);
+
+    state.overlay = None;
+    let restored = state
+        .compose(106, 30)
+        .expect("terminal frame after closing popup");
+    assert_eq!(restored.cells, before.cells);
+}
+
+#[test]
 fn navigator_renders_connected_siblings_and_ancestor_lines() {
     let mut snapshot = snapshot();
     snapshot.focused_pane_id = None;
